@@ -5,3 +5,6 @@ SpeechRecognition
 PyAudio
 pvporcupine
 python-dotenv
+fuzzywuzzy
+python-Levenshtein
+pyautogui

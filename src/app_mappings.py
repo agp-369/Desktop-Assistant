@@ -1,3 +1,5 @@
+import os
+
 APP_MAPPINGS = {
     "win32": {
         "chrome": "chrome.exe",
@@ -5,6 +7,10 @@ APP_MAPPINGS = {
         "vscode": "Code.exe",
         "notepad": "notepad.exe",
         "calculator": "calc.exe",
+        "camera": "WindowsCamera.exe",
+        "photos": "Microsoft.Photos.exe",
+        "settings": "SystemSettings.exe",
+        "store": "WinStore.App.exe",
     },
     "darwin": {
         "chrome": "Google Chrome",
@@ -27,6 +33,7 @@ SEARCH_PATHS = {
     "win32": [
         "C:\\Program Files",
         "C:\\Program Files (x86)",
+        os.path.join(os.getenv('LOCALAPPDATA'), 'Microsoft\\WindowsApps')
     ],
     "darwin": [
         "/Applications"

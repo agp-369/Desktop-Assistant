@@ -1,6 +1,5 @@
 import subprocess
 import sys
-import shlex
 import os
 import psutil
 import webbrowser
@@ -9,8 +8,11 @@ import speech_recognition as sr
 import pvporcupine
 import pyaudio
 import struct
+import pyautogui
+import json
 from dotenv import load_dotenv
 from app_mappings import APP_MAPPINGS, SEARCH_PATHS
+from command_parser import parse_command
 
 load_dotenv()
 
@@ -20,20 +22,37 @@ if sys.platform == "win32":
     import win32gui
     import win32con
 
+def load_config():
+    """
+    Loads the configuration from config.json.
+    """
+    try:
+        with open("config.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+config = load_config()
+assistant_name = config.get("assistant_name", "Nora")
+wake_word = config.get("wake_word", "porcupine")
+
 engine = pyttsx3.init()
+engine.setProperty('rate', config.get("voice_options", {}).get("rate", 150))
+engine.setProperty('volume', config.get("voice_options", {}).get("volume", 0.9))
+
 recognizer = sr.Recognizer()
 
 def speak(text):
     """
     Speaks the given text.
     """
-    print(f"Nora: {text}")
+    print(f"{assistant_name}: {text}")
     engine.say(text)
     engine.runAndWait()
 
 def listen_for_wake_word():
     """
-    Listens for the wake word "porcupine".
+    Listens for the wake word.
     """
     if not PICOVOICE_ACCESS_KEY:
         speak("Picovoice access key not found. Please set the PICOVOICE_ACCESS_KEY environment variable.")
@@ -43,8 +62,7 @@ def listen_for_wake_word():
     pa = None
     audio_stream = None
     try:
-        # NOTE: "Nora" is a custom wake word. Using "porcupine" as a placeholder.
-        porcupine = pvporcupine.create(access_key=PICOVOICE_ACCESS_KEY, keywords=['porcupine'])
+        porcupine = pvporcupine.create(access_key=PICOVOICE_ACCESS_KEY, keywords=[wake_word])
         pa = pyaudio.PyAudio()
         audio_stream = pa.open(
             rate=porcupine.sample_rate,
@@ -53,7 +71,7 @@ def listen_for_wake_word():
             input=True,
             frames_per_buffer=porcupine.frame_length
         )
-        print("Listening for wake word ('porcupine')...")
+        print(f"Listening for wake word ('{wake_word}')...")
         while True:
             pcm = audio_stream.read(porcupine.frame_length)
             pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
@@ -93,25 +111,45 @@ def listen_for_command():
         speak("Sorry, my speech service is down.")
         return None
 
-# --- (The rest of the functions like find_executable, open_application, etc. remain unchanged) ---
+def type_text(text):
+    """
+    Types the given text using pyautogui.
+    """
+    try:
+        speak(f"Typing: {text}")
+        pyautogui.write(text, interval=0.05)
+    except Exception as e:
+        speak(f"An error occurred while typing: {e}")
 
 def find_executable(app_name):
     platform = sys.platform
-    if platform in APP_MAPPINGS and app_name in APP_MAPPINGS[platform]:
-        app_name = APP_MAPPINGS[platform][app_name]
-    if os.path.isfile(app_name):
+    app_name = APP_MAPPINGS.get(platform, {}).get(app_name, app_name)
+    if os.path.isfile(app_name) and os.access(app_name, os.X_OK):
         return app_name
-    path = os.environ.get("PATH", "")
-    for p in path.split(os.pathsep):
-        full_path = os.path.join(p, app_name)
+    search_paths = os.environ.get("PATH", "").split(os.pathsep) + SEARCH_PATHS.get(platform, [])
+    for path in search_paths:
+        full_path = os.path.join(path, app_name)
         if os.path.isfile(full_path) and os.access(full_path, os.X_OK):
             return full_path
-    if platform in SEARCH_PATHS:
-        for p in SEARCH_PATHS[platform]:
-            for root, _, files in os.walk(p):
-                if app_name in files:
-                    return os.path.join(root, app_name)
     return None
+
+def find_file(filename):
+    """
+    Searches for a file in the user's home directory.
+    """
+    home_dir = os.path.expanduser("~")
+    for root, _, files in os.walk(home_dir):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
+
+def open_uwp_app(app_name):
+    try:
+        subprocess.run(f'start shell:appsfolder\\{app_name}', shell=True, check=True)
+        speak(f"Opening {app_name}...")
+    except subprocess.CalledProcessError:
+        speak(f"Could not open the UWP app: {app_name}")
+
 
 def get_process_pid(process_name):
     for proc in psutil.process_iter(['pid', 'name']):
@@ -120,7 +158,6 @@ def get_process_pid(process_name):
     return None
 
 def bring_window_to_front(pid):
-    # This is a Windows-only implementation
     if sys.platform != "win32":
         speak("Bringing window to front is only supported on Windows for now.")
         return
@@ -134,6 +171,9 @@ def bring_window_to_front(pid):
 
 def open_application(app_name):
     executable_path = find_executable(app_name)
+    if sys.platform == "win32" and not executable_path and "." in app_name:
+        open_uwp_app(app_name)
+        return
     if not executable_path:
         speak(f"Application '{app_name}' not found. Would you like to search online?")
         response = listen_for_command()
@@ -157,6 +197,7 @@ def open_application(app_name):
         speak(f"Opening {app_name}...")
     except Exception as e:
         speak(f"An error occurred: {e}")
+
 
 def close_application(app_name):
     executable_path = find_executable(app_name)
@@ -184,7 +225,11 @@ def close_application(app_name):
     if not process_found:
         speak(f"Application '{app_name}' is not running.")
 
-def open_file(filepath):
+def open_file(filename):
+    filepath = find_file(filename)
+    if not filepath:
+        speak(f"File '{filename}' not found in your home directory.")
+        return
     try:
         if sys.platform == "win32":
             os.startfile(filepath)
@@ -192,9 +237,7 @@ def open_file(filepath):
             subprocess.Popen(["open", filepath])
         else:
             subprocess.Popen(["xdg-open", filepath])
-        speak(f"Opening {filepath}...")
-    except FileNotFoundError:
-        speak(f"Error: File '{filepath}' not found.")
+        speak(f"Opening {filename}...")
     except Exception as e:
         speak(f"An error occurred: {e}")
 
@@ -214,32 +257,23 @@ def main():
             speak("How can I help you?")
             command_str = listen_for_command()
             if command_str:
-                try:
-                    parts = shlex.split(command_str)
-                    command = parts[0].lower()
-                    args = parts[1:]
+                command, args = parse_command(command_str)
 
-                    if command == "goodbye" or command == "exit":
-                        speak("Goodbye!")
-                        break
-                    elif command == "open" and args:
-                        if args[0] == "file" and len(args) > 1:
-                            open_file(" ".join(args[1:]))
-                        else:
-                            open_application(" ".join(args))
-                    elif command == "close" and args:
-                        close_application(" ".join(args))
-                    elif command == "play" and "on" in args and "youtube" in args:
-                        query_index = args.index("youtube") + 1
-                        if query_index < len(args):
-                             query = " ".join(args[query_index:])
-                             play_on_youtube(query)
-                        else:
-                             speak("Please specify what you want to play on YouTube.")
-                    else:
-                        speak(f"Sorry, I don't know the command: {command_str}")
-                except ValueError:
-                    speak("I had trouble understanding the command due to quotes.")
+                if command == "exit":
+                    speak("Goodbye!")
+                    break
+                elif command == "open_app":
+                    open_application(args)
+                elif command == "close_app":
+                    close_application(args)
+                elif command == "open_file":
+                    open_file(args)
+                elif command == "play_youtube":
+                    play_on_youtube(args)
+                elif command == "type_text":
+                    type_text(args)
+                else:
+                    speak(f"Sorry, I don't know the command: {command_str}")
 
 if __name__ == "__main__":
     main()
