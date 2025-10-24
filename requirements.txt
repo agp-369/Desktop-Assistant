@@ -1,5 +1,4 @@
 psutil
-pywin32
 pyttsx3
 SpeechRecognition
 PyAudio
@@ -7,5 +6,6 @@ pvporcupine
 python-dotenv
 fuzzywuzzy
 python-Levenshtein
-pyautogui
 customtkinter
+pyautogui
+pywin32; sys_platform == 'win32'
