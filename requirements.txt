@@ -1,2 +1,7 @@
 psutil
 pywin32
+pyttsx3
+SpeechRecognition
+PyAudio
+pvporcupine
+python-dotenv
